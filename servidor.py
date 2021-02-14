@@ -1,5 +1,5 @@
 import socket
-import threading
+import threading, os
 
 class Server:
     def __init__(self, addr, port):
@@ -27,7 +27,7 @@ class Server:
                 print(data.decode() + ' | size: ' + str(len(data)))
                 response = data
                 c_sock.send(response)
-            print('Closing socket')
+            print('Closing socket') 
             c_sock.close()
         # Close client socket if client times out
         except socket.timeout:
@@ -38,5 +38,8 @@ if __name__ == "__main__":
     tcp_ip = '127.0.0.1'
     tcp_port = 5151
 
-    server = Server(tcp_ip, tcp_port)
-    server.listen()
+    try:
+        server = Server(tcp_ip, tcp_port)
+        server.listen()
+    except KeyboardInterrupt:
+        os._exit(1)
