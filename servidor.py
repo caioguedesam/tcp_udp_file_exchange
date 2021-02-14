@@ -5,20 +5,28 @@ class Server:
     def __init__(self, addr, port):
         self.addr = addr
         self.port = port
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((self.addr, self.port))
+
+        self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.tcp_sock.bind((self.addr, self.port))
+
+        self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_sock.bind((self.addr, self.port))
 
     def listen(self):
-        self.sock.listen()
+        self.tcp_sock.listen()
         while True:
-            c_sock, c_addr = self.sock.accept()
-            c_sock.settimeout(30)
+            c_sock, c_addr = self.tcp_sock.accept()
+            c_sock.settimeout(60)
             threading.Thread(target = self.client_thread, args = (c_sock, c_addr)).start()
 
     def client_thread(self, c_sock, c_addr):
         try:
             buf_size = 1024
+            
+            #udp_data, udp_addr = self.udp_sock.recvfrom(buf_size)
+            #print('Received udp data: ' + udp_data.decode() + ', from ' + str(udp_addr))
+
             while True:
                 data = c_sock.recv(buf_size)
                 # Close client socket if no data incoming from client
@@ -35,11 +43,11 @@ class Server:
             c_sock.close()
 
 if __name__ == "__main__":
-    tcp_ip = '127.0.0.1'
-    tcp_port = 5151
+    ip = '127.0.0.1'
+    port = 5151
 
     try:
-        server = Server(tcp_ip, tcp_port)
+        server = Server(ip, port)
         server.listen()
     except KeyboardInterrupt:
         os._exit(1)
