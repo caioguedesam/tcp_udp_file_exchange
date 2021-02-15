@@ -1,5 +1,6 @@
 import socket
 import threading, os
+from message_utils import *
 
 class Server:
     def __init__(self, addr, port):
@@ -12,6 +13,8 @@ class Server:
 
         self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_sock.bind((self.addr, self.port))
+
+        self.header_size = 2
 
     def listen(self):
         self.tcp_sock.listen()
@@ -26,6 +29,7 @@ class Server:
             
             #udp_data, udp_addr = self.udp_sock.recvfrom(buf_size)
             #print('Received udp data: ' + udp_data.decode() + ', from ' + str(udp_addr))
+            # TODO: Server needs to bind a new udp port for each client when connecting (?).
 
             while True:
                 data = c_sock.recv(buf_size)

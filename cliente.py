@@ -1,6 +1,7 @@
 import socket
 import threading
 import sys, os
+from message_utils import *
 
 class Client:
     def __init__(self, s_addr, s_port):
@@ -10,10 +11,20 @@ class Client:
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_sock.connect((s_addr, s_port))
         
-        self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        #self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
+        self.header_size = 2
         self.buf_size = 1024
-    
+
+    def start_conn(self):
+        print('Starting connection with server...')
+        hello_header = make_header(message_type.HELLO, message_channel.CONTROL)
+        # Sending HELLO message
+        self.tcp_sock.send(hello_header)
+        # Receiving CONNECTION message with UDP port data
+        self.tcp_sock.recv(self.header_size)
+
+
     def send_thread(self):
         #self.udp_sock.sendto('CLIENT MESSAGE'.encode(), (self.s_addr, self.s_port))
 
