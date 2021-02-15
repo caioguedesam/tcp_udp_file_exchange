@@ -1,5 +1,21 @@
 from enum import Enum
 
+# Sizes of data elements from each message type, in bytes
+HEADER_len = 2
+CONN_port_len = 4
+INFO_filename_len = 15
+INFO_file_len = 8
+FILE_seq_num_len = 4
+FILE_payload_size_len = 2
+FILE_payload_max_len = 1000
+ACK_seq_num_len = FILE_seq_num_len
+
+# Sizes of each TCP message type, in bytes
+HELLO_len, OK_len, END_len = HEADER_len, HEADER_len, HEADER_len
+CONN_len = HEADER_len + CONN_port_len
+INFO_len = HEADER_len + INFO_filename_len + INFO_file_len
+ACK_len = HEADER_len + ACK_seq_num_len
+
 class message_type(Enum):
     HELLO = 1
     CONNECTION = 2
@@ -32,7 +48,7 @@ def hello_msg():
 # Makes CONNECTION message from server, with UDP port for client to send data to
 def connection_msg(udp_port):
     header = make_header(message_type.CONNECTION, message_channel.CONTROL)
-    port = udp_port.to_bytes(4, byteorder='big')
+    port = udp_port.to_bytes(CONN_port_len, byteorder='big')
     msg = header + port
     return msg
 
@@ -43,7 +59,7 @@ def valid_file_name(file_name):
         file_name_ascii = file_name.encode(encoding="ascii")
 
         # File name size needs to be 15 bytes at most
-        if len(file_name.encode()) > 15:
+        if len(file_name.encode()) > INFO_filename_len:
             return False
         
         # File name needs to have only one dot
@@ -68,8 +84,8 @@ def info_msg(file_name, file_size):
     header = make_header(message_type.INFO, message_channel.CONTROL)
     # Name always with 15 bytes
     name = file_name.encode(encoding="ascii")
-    name = b'\x00' * (15 - len(name)) + name
-    size = file_size.to_bytes(8, byteorder='big')
+    name = b'\x00' * (INFO_filename_len - len(name)) + name
+    size = file_size.to_bytes(INFO_file_len, byteorder='big')
     msg = header + name + size
     return msg
 
@@ -83,7 +99,7 @@ def end_msg():
 
 # Makes list of FILE messages, from file to upload to server. Each message contains a
 # sequence number to identify its order in the file, as well as message size and data.
-def file_msg(file_name, max_payload_size = 1000):
+def file_msg(file_name, max_payload_size = FILE_payload_max_len):
     header = make_header(message_type.FILE, message_channel.DATA)
     f = open(file_name, 'rb')
     payload = f.read(max_payload_size)
@@ -91,8 +107,8 @@ def file_msg(file_name, max_payload_size = 1000):
     payload_num = 0
     while(payload):
         # Get payload data and make packet
-        seq_num = payload_num.to_bytes(4, byteorder='big')
-        payload_size = len(payload).to_bytes(2, byteorder='big')
+        seq_num = payload_num.to_bytes(FILE_seq_num_len, byteorder='big')
+        payload_size = len(payload).to_bytes(FILE_payload_size_len, byteorder='big')
         msgs += [header + seq_num + payload_size + payload]
         # Read payload again until file ends
         payload = f.read(max_payload_size)
@@ -103,5 +119,5 @@ def file_msg(file_name, max_payload_size = 1000):
 # specified sequence number.
 def ack_msg(seq_num):
     header = make_header(message_type.ACK, message_channel.CONTROL)
-    msg = header + seq_num.to_bytes(4, byteorder='big')
+    msg = header + seq_num.to_bytes(ACK_seq_num_len, byteorder='big')
     return msg
