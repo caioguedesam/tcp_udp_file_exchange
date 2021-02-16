@@ -106,11 +106,10 @@ def file_msg(file_name, max_payload_size = FILE_payload_max_len):
     msgs = []
     payload_num = 0
     while(payload):
-        # Get payload data and make packet
         seq_num = payload_num.to_bytes(FILE_seq_num_len, byteorder='big')
         payload_size = len(payload).to_bytes(FILE_payload_size_len, byteorder='big')
         msgs += [header + seq_num + payload_size + payload]
-        # Read payload again until file ends
+        
         payload = f.read(max_payload_size)
         payload_num += 1
     return msgs
