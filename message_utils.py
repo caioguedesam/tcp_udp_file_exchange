@@ -35,7 +35,8 @@ def make_header(type, channel):
     header = header_bytes[0] + header_bytes[1]
     return header
 
-def parse_header(header):
+def parse_header(msg):
+    header = msg[:HEADER_len]
     header_values = list(header)
     # Convert values from header into correct enum types
     header_type = message_type(header_values[0])
