@@ -105,6 +105,13 @@ class Client:
             window_mutex.release()
 
         print('Finished sending.')
+
+    def wait_for_end(self):
+        data = self.tcp_sock.recv(END_len)
+        if parse_header(data) != (message_type.END, message_channel.CONTROL):
+            print('Error: did not receive END message.')
+        else:
+            print('Received END message. Shutting down connection.')
         self.close()
 
     def receive_ack(self):
@@ -114,8 +121,14 @@ class Client:
 
         while True:
             data = self.tcp_sock.recv(ACK_len)
+            # Receiving END message
+            if not data:
+                break
+            if parse_header(data) == (message_type.END, message_channel.CONTROL):
+                print('Received END from server. Shutting down connection')
+                break
             if parse_header(data) != (message_type.ACK, message_channel.CONTROL):
-                print('Error: received message of type other than ACK.')
+                print('Error: received message of type other than ACK or END.')
             else:
                 ack = int.from_bytes(data[HEADER_len:], byteorder='big')
                 if ack >= base:
@@ -125,10 +138,10 @@ class Client:
                     # Stop timer because of received ack message
                     timer.stop()
                     window_mutex.release()
+        self.close()
             
 
     def close(self):
-        print('Closing client')
         self.tcp_sock.close()
         os._exit(1)
 
@@ -141,4 +154,3 @@ if __name__ == "__main__":
         client.init_conn()
         client.send_file_data()
         client.send_file()
-        client.close()

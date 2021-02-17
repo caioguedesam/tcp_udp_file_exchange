@@ -73,44 +73,59 @@ class Server:
             c_sock.close()
             return
 
-        # Receive file
+        # Receive data
         pkt_expected = 0
-        #f = open(os.path.join('output', file_name), 'wb')
-        with open(os.path.join('output', file_name), 'wb') as f:
-            while True:
-                # Receive data
-                data, addr = c_data_sock.recvfrom(FILE_max_len)
-                # Stop loop when no data is sent anymore.
-                if not data:
-                    break
-                header = data[:HEADER_len]
-                if parse_header(header) != (message_type.FILE, message_channel.DATA):
-                    print('Error: received message on UDP that was not FILE message.')
-                    continue
-                
-                seq_num = int.from_bytes(data[HEADER_len:HEADER_len + FILE_seq_num_len], byteorder='big')
-                print('Received packet with seq num: ' + str(seq_num))
+        pkt_total_count = msg_count(file_size)
+        pkt_count = 0
+        file_data = b''
+        while True:
+            # Stop loop when all packets have been delivered
+            if pkt_count == pkt_total_count:
+                break
+            data, addr = c_data_sock.recvfrom(FILE_max_len)
+            # Stop loop when no data is sent anymore.
+            if not data:
+                break
+            header = data[:HEADER_len]
+            if parse_header(header) != (message_type.FILE, message_channel.DATA):
+                print('Error: received message on UDP that was not FILE message.')
+                continue
+            
+            seq_num = int.from_bytes(data[HEADER_len:HEADER_len + FILE_seq_num_len], byteorder='big')
+            print('Received packet with seq num: ' + str(seq_num))
 
-                if seq_num == pkt_expected:
-                    # Got expected packet, writing to file
-                    print('Got expected packet (' + str(seq_num) + ')')
-                    print('Sending ACK for ' + str(pkt_expected))
-                    c_sock.send(ack_msg(pkt_expected))
-                    # Expect next packet
-                    pkt_expected += 1
-                    # Write to file after sending ack
-                    pkt_data = data[HEADER_len + FILE_seq_num_len + FILE_payload_size_len:]
-                    print('Writing ' + pkt_data.decode())
-                    print('Status: ' + str(f.write(pkt_data) > 0))
-                else:
-                    # Didn't get expected packet, resend ack for last acknowledged packet
-                    print('Sending ACK for ' + str(pkt_expected - 1))
-                    c_sock.send(ack_msg(pkt_expected - 1))
+            if seq_num == pkt_expected:
+                # Got expected packet, writing to file
+                print('Got expected packet (' + str(seq_num) + ')')
+                print('Sending ACK for ' + str(pkt_expected))
+                c_sock.send(ack_msg(pkt_expected))
+                # Expect next packet
+                pkt_expected += 1
+                # Store in file data after sending ack
+                pkt_data = data[HEADER_len + FILE_seq_num_len + FILE_payload_size_len:]
+                file_data += pkt_data
+                pkt_count += 1
+                print('File data: ' + str(len(file_data)))
+            else:
+                # Didn't get expected packet, resend ack for last acknowledged packet
+                print('Sending ACK for ' + str(pkt_expected - 1))
+                c_sock.send(ack_msg(pkt_expected - 1))
 
-        #f.close()
-        # Close client thread after finishing file transfer
-        print('Closing socket') 
-        c_sock.close()
+        if len(file_data) > 0:
+            print('Writing on new file...')
+            f = open(os.path.join('output', file_name), 'wb')
+            f.write(file_data)
+            f.close()
+        
+        # Sending END message
+        end = end_msg()
+        c_sock.send(end)
+        print('Sent END to client...')
+        close_conn = c_sock.recv(HEADER_len)
+        if not close_conn:
+            # Close client thread after finishing file transfer
+            print('Closing socket') 
+            c_sock.close()
 
 if __name__ == "__main__":
     try:
