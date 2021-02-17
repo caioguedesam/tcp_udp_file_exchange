@@ -10,10 +10,11 @@ FILE_payload_size_len = 2
 FILE_payload_max_len = 1000
 ACK_seq_num_len = FILE_seq_num_len
 
-# Sizes of each TCP message type, in bytes
+# Sizes of each message type, in bytes
 HELLO_len, OK_len, END_len = HEADER_len, HEADER_len, HEADER_len
 CONN_len = HEADER_len + CONN_port_len
 INFO_len = HEADER_len + INFO_filename_len + INFO_file_len
+FILE_max_len = HEADER_len + FILE_seq_num_len + FILE_payload_size_len + FILE_payload_max_len
 ACK_len = HEADER_len + ACK_seq_num_len
 
 class message_type(Enum):
@@ -113,6 +114,13 @@ def file_msg(file_name, max_payload_size = FILE_payload_max_len):
         payload = f.read(max_payload_size)
         payload_num += 1
     return msgs
+
+# Get number of separate messages based on a file size
+def msg_count(file_size):
+    count = file_size // FILE_payload_max_len
+    if file_size % FILE_payload_max_len > 0:
+        count += 1
+    return count
 
 # Makes ACK message from server, confirming receiving FILE message with
 # specified sequence number.

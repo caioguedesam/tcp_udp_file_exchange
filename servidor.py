@@ -13,6 +13,8 @@ class Server:
         self.tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.tcp_sock.bind((self.addr, self.port))
 
+        self.window_size = 4
+
     def listen(self):
         self.tcp_sock.listen()
         while True:
@@ -50,28 +52,46 @@ class Server:
         file_size = int.from_bytes(file_info[INFO_filename_len:], byteorder='big')
         print('Received INFO from client ' + file_name + ':' + str(file_size))
 
-        # TODO: Allocate sliding window
+        # Allocating sliding window
+        count = msg_count(file_size)
+        sliding_window = SlidingWindow(self.window_size, count)
 
         # Sending OK message to client
         ok = ok_msg()
         c_sock.send(ok)
         print('Sent OK')
-        return file_info, file_name
-        
+        return file_info, file_name, sliding_window
+
+    def receive_file(self, c_data_sock, file_size, window):
+        print('Started receiving file...')
+        # Receving messages until sliding window has finished
+        ack_count = 0
+        file_data = []
+        while(not window.finished()):
+            data = c_data_sock.recvfrom(FILE_max_len)
+            if parse_header(data) != (message_type.FILE, message_channel.DATA):
+                print('Error: wrong header when receiving file')
+                return False
+            
+            seq_num = data[HEADER_len:HEADER_len + FILE_seq_num_len]
+            # TODO
+
 
     def client_thread(self, c_sock, c_addr):
         c_data_sock, c_data_port = self.init_conn(c_sock, c_addr)
-        # Error when initializing connection, close client thread.
-        if c_data_sock == 0 and c_data_port == 0:
+
+        if (c_data_sock, c_data_port) == (0, 0):
             print('ERROR: Closing socket') 
             c_sock.close()
             return
 
-        file_name, file_size = self.get_file_info(c_sock)
-        if file_name == 0 and file_size == 0:
+        file_name, file_size, window = self.get_file_info(c_sock)
+        if (file_name, file_size, window) == (0, 0, 0):
             print('ERROR: Closing socket')
             c_sock.close()
             return
+
+        # Receive file
 
         # Close client thread after finishing file transfer
         print('Closing socket') 
