@@ -1,7 +1,6 @@
 import socket
 import threading
 import sys, os, time
-from timer import Timer
 from message_utils import *
 
 WINDOW_SIZE = 4
@@ -9,12 +8,6 @@ TIMEOUT_TIME = 5
 SLEEP_TIME = 0.25
 
 window_mutex = threading.Lock()
-base = 0
-timer = Timer(TIMEOUT_TIME)
-
-def set_window_size(packets_to_send):
-    global base
-    return min(WINDOW_SIZE, packets_to_send - base)
 
 class Client:
     def __init__(self, s_addr, s_port, file_name):
@@ -24,6 +17,11 @@ class Client:
 
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_sock.connect((s_addr, s_port))
+
+        self.next_packet_to_send = 0
+        # ACKed packets until last_acked (not including it).
+        self.last_acked = 0
+        self.end_conn = False
 
     def init_conn(self):
         # Sending HELLO message to identify
@@ -65,81 +63,64 @@ class Client:
 
     def send_file(self):
         global window_mutex
-        global base
         global timer
-
         packets = file_msg(self.file_name)
         packet_count = len(packets)
-        window_size = set_window_size(packet_count)
-        next_to_send = 0
-        base = 0
-
-        # Start receiving ack thread
+        print('Sending file, packet count: ' + str(packet_count))
+        
         threading.Thread(target=self.receive_ack).start()
 
-        while base < packet_count:
+        while self.last_acked < packet_count:
+            print('ENTERING LOOP, LAST ACKED: ' + str(self.last_acked) + ', PKT COUNT: ' + str(packet_count))
             window_mutex.acquire()
-            while next_to_send < base + window_size:
-                print('Sending packet ' + str(next_to_send) + '...')
-                self.udp_sock.sendto(packets[next_to_send], (self.s_addr, self.udp_port))
-                next_to_send += 1
-            
-            if not timer.running():
-                print('Starting timer')
-                timer.start()
+            if self.next_packet_to_send >= packet_count:
+                continue
 
-            while timer.running() and not timer.timeout():
+            while self.next_packet_to_send < self.last_acked + WINDOW_SIZE and self.next_packet_to_send < packet_count:
+                print('Sending packet ' + str(self.next_packet_to_send) + '...')
+                self.udp_sock.sendto(packets[self.next_packet_to_send], (self.s_addr, self.udp_port))
+                self.next_packet_to_send += 1
+            
+            start_time = time.time()
+            while self.last_acked != self.next_packet_to_send and time.time() < start_time + TIMEOUT_TIME:
+                print('Waiting... last ACKed: ' + str(self.last_acked) + ', next to send: ' + str(self.next_packet_to_send))
                 window_mutex.release()
-                print('Sleeping...')
                 time.sleep(SLEEP_TIME)
                 window_mutex.acquire()
 
-            if timer.timeout():
-                print('Timed out, sending packets again.')
-                timer.stop()
-                next_to_send = base
-            else:
-                print('Shifting window')
-                window_size = set_window_size(packet_count)
-                print('New window size: ' + str(packet_count) + ' - ' + str(base) + ' = ' + str(window_size))
+            # Timeout
+            if self.last_acked != self.next_packet_to_send:
+                self.next_packet_to_send = self.last_acked
             window_mutex.release()
 
-        print('Finished sending.')
-
-    def wait_for_end(self):
-        data = self.tcp_sock.recv(END_len)
-        if parse_header(data) != (message_type.END, message_channel.CONTROL):
-            print('Error: did not receive END message.')
-        else:
-            print('Received END message. Shutting down connection.')
+        print('Finished sending')
         self.close()
 
     def receive_ack(self):
         global window_mutex
-        global base
         global timer
 
         while True:
             data = self.tcp_sock.recv(ACK_len)
-            # Receiving END message
             if not data:
                 break
             if parse_header(data) == (message_type.END, message_channel.CONTROL):
                 print('Received END from server. Shutting down connection')
                 break
-            if parse_header(data) != (message_type.ACK, message_channel.CONTROL):
-                print('Error: received message of type other than ACK or END.')
+            elif parse_header(data) != (message_type.ACK, message_channel.CONTROL):
+                print('Error: got message of type different than ACK or END.')
             else:
                 ack = int.from_bytes(data[HEADER_len:], byteorder='big')
-                if ack >= base:
+                if ack > self.last_acked:
+                    self.last_acked = ack
+                print('Received ACK ' + str(ack) + ', last ACKed: ' + str(self.last_acked))
+                if ack >= self.next_packet_to_send:
                     window_mutex.acquire()
-                    base = ack + 1
-                    print('Received ack ' + str(ack) + ', new base: ' + str(base))
-                    # Stop timer because of received ack message
+                    self.next_packet_to_send = ack
+                    print('Next to send: ' + str(self.next_packet_to_send))
                     timer.stop()
                     window_mutex.release()
-        self.close()
-            
+        print('Received all packets.')      
 
     def close(self):
         self.tcp_sock.close()

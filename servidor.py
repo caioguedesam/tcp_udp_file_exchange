@@ -1,8 +1,9 @@
 import socket
 import threading
 import sys, os
-from timer import Timer
 from message_utils import *
+
+WINDOW_SIZE = 4
 
 class Server:
     def __init__(self, addr, port):
@@ -12,8 +13,6 @@ class Server:
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.tcp_sock.bind((self.addr, self.port))
-
-        self.window_size = 4
 
     def listen(self):
         self.tcp_sock.listen()
@@ -73,44 +72,47 @@ class Server:
             c_sock.close()
             return
 
-        # Receive data
-        pkt_expected = 0
-        pkt_total_count = msg_count(file_size)
-        pkt_count = 0
-        file_data = b''
+        next_packet_to_recv = 0
+        # Highest sequence number received + 1
+        highest_seq_recv = 1
+        pkt_count = msg_count(file_size)
+        stored_pkts = [-1 for i in range(msg_count(file_size))]
+        print('Packets to receive: ' + str(len(stored_pkts)))
         while True:
-            # Stop loop when all packets have been delivered
-            if pkt_count == pkt_total_count:
-                break
             data, addr = c_data_sock.recvfrom(FILE_max_len)
-            # Stop loop when no data is sent anymore.
-            if not data:
-                break
-            header = data[:HEADER_len]
-            if parse_header(header) != (message_type.FILE, message_channel.DATA):
+            if parse_header(data) != (message_type.FILE, message_channel.DATA):
                 print('Error: received message on UDP that was not FILE message.')
                 continue
-            
             seq_num = int.from_bytes(data[HEADER_len:HEADER_len + FILE_seq_num_len], byteorder='big')
-            print('Received packet with seq num: ' + str(seq_num))
-
-            if seq_num == pkt_expected:
-                # Got expected packet, writing to file
-                print('Got expected packet (' + str(seq_num) + ')')
-                print('Sending ACK for ' + str(pkt_expected))
-                c_sock.send(ack_msg(pkt_expected))
-                # Expect next packet
-                pkt_expected += 1
-                # Store in file data after sending ack
+            if seq_num >= next_packet_to_recv and seq_num < next_packet_to_recv + WINDOW_SIZE:
+                # Accept packet, within window
                 pkt_data = data[HEADER_len + FILE_seq_num_len + FILE_payload_size_len:]
-                file_data += pkt_data
-                pkt_count += 1
-                print('File data: ' + str(len(file_data)))
-            else:
-                # Didn't get expected packet, resend ack for last acknowledged packet
-                print('Sending ACK for ' + str(pkt_expected - 1))
-                c_sock.send(ack_msg(pkt_expected - 1))
+                if stored_pkts[seq_num] == -1:
+                    print('Storing packet ' + str(seq_num))
+                    stored_pkts[seq_num] = pkt_data
 
+                if seq_num == next_packet_to_recv:
+                    next_packet_to_recv += 1
+                    while next_packet_to_recv < len(stored_pkts) and stored_pkts[next_packet_to_recv] != -1:
+                        next_packet_to_recv += 1
+
+                if seq_num >= highest_seq_recv:
+                    highest_seq_recv = seq_num + 1
+                    print('Highest seq recv: ' + str(highest_seq_recv))
+                    if highest_seq_recv >= pkt_count:
+                        print('Received all packets from file.')
+                        # Send final ACK
+                        c_sock.send(ack_msg(next_packet_to_recv))
+                        break
+            
+            # Transmit ACK
+            print('Sending ACK ' + str(next_packet_to_recv))
+            c_sock.send(ack_msg(next_packet_to_recv))
+
+        # Writing on file
+        file_data = b''
+        for i in stored_pkts:
+            file_data += i
         if len(file_data) > 0:
             print('Writing on new file...')
             f = open(os.path.join('output', file_name), 'wb')
