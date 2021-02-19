@@ -1,11 +1,12 @@
-import socket
-import threading
-import sys, os, time
+import socket, threading
+import sys, time
+from os.path import isfile
+from os import stat
 from message_utils import *
 
 WINDOW_SIZE = 4
 TIMEOUT_TIME = 5
-SLEEP_TIME = 0.25
+SLEEP_TIME = 0.01
 
 window_mutex = threading.Lock()
 
@@ -19,112 +20,104 @@ class Client:
         self.tcp_sock.connect((s_addr, s_port))
 
         self.next_packet_to_send = 0
-        # ACKed packets until last_acked (not including it).
         self.last_acked = 0
-        self.end_conn = False
 
+    # Inicia conexão com servidor. Engloba mensagens HELLO e CONNECTION.
     def init_conn(self):
-        # Sending HELLO message to identify
-        print('Sending HELLO to server...')
+        # Mandando mensagem HELLO
         hello = make_header(message_type.HELLO, message_channel.CONTROL)
         self.tcp_sock.send(hello)
 
-        # Receiving CONNECTION message with UDP port data
+        # Recebendo mensagem CONNECTION com porta UDP
         data = self.tcp_sock.recv(CONN_len)
         if parse_header(data) != (message_type.CONNECTION, message_channel.CONTROL):
-            print('ERROR: didn\'t receive CONNECTION from server.')
+            print('ERRO: Não recebeu mensagem do tipo CONNECTION do servidor.')
             self.close()
 
-        # Making UDP socket to send file with
+        # Alocando socket UDP para enviar arquivo
         port = data[HEADER_len:]
         self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_port = int.from_bytes(port, byteorder='big')
-        print('Received CONNECTION from server, with port: ' + str(self.udp_port))
 
+    # Envia dados gerais do arquivo para o servidor. Engloba mensagens INFO e OK.
     def send_file_data(self):
-        # Only send INFO message if file exists
-        if not os.path.isfile(self.file_name):
-            print('File not found on current path.')
+        if not isfile(self.file_name):
+            print('ERRO: Arquivo não encontrado na pasta atual.')
             return
         
-        # Sending INFO message with file name and size
-        size = os.stat(self.file_name).st_size
+        # Mandando mensagem INFO com nome e tamanho do arquivo
+        size = stat(self.file_name).st_size
         self.file_pkt_count = msg_count(size)
         info = info_msg(self.file_name, size)
-        print('Sending INFO message to server. File name: ' + str(self.file_name) + ', size: ' + str(size))
         self.tcp_sock.send(info)
 
-        # Receiving OK from server
+        # Recebendo mensagem OK
         data = self.tcp_sock.recv(OK_len)
         if parse_header(data) != (message_type.OK, message_channel.CONTROL):
-            print('ERROR: didn\'t receive OK from server.')
+            print('ERRO: Não recebeu mensagem do tipo OK do servidor.')
             self.close()
-        print('Received OK from server.')
 
+    # Envia o arquivo para o servidor. Engloba mensagens FILE.
     def send_file(self):
         global window_mutex
-        global timer
         packets = file_msg(self.file_name)
         packet_count = len(packets)
-        print('Sending file, packet count: ' + str(packet_count))
         
-        threading.Thread(target=self.receive_ack).start()
+        # Criando thread separada para receber mensagens ACK do servidor
+        recv_th = threading.Thread(target=self.receive_ack)
+        recv_th.start()
 
+        # Enviando arquivo até receber confirmação de todos os pacotes.
         while self.last_acked < packet_count:
-            print('ENTERING LOOP, LAST ACKED: ' + str(self.last_acked) + ', PKT COUNT: ' + str(packet_count))
             window_mutex.acquire()
             if self.next_packet_to_send >= packet_count:
                 continue
 
+            # Envia próximo pacote até o limite da janela ou até o último pacote
             while self.next_packet_to_send < self.last_acked + WINDOW_SIZE and self.next_packet_to_send < packet_count:
-                print('Sending packet ' + str(self.next_packet_to_send) + '...')
                 self.udp_sock.sendto(packets[self.next_packet_to_send], (self.s_addr, self.udp_port))
                 self.next_packet_to_send += 1
             
+            # Começa tempo de espera
             start_time = time.time()
             while self.last_acked != self.next_packet_to_send and time.time() < start_time + TIMEOUT_TIME:
-                print('Waiting... last ACKed: ' + str(self.last_acked) + ', next to send: ' + str(self.next_packet_to_send))
                 window_mutex.release()
                 time.sleep(SLEEP_TIME)
                 window_mutex.acquire()
 
-            # Timeout
+            # Timeout caso último pacote confirmado não seja o antecessor do próximo a ser enviado.
             if self.last_acked != self.next_packet_to_send:
+                print('ERRO: Timeout ocorrido. Reenviando pacotes na janela.')
                 self.next_packet_to_send = self.last_acked
             window_mutex.release()
+        
+        recv_th.join()
 
-        print('Finished sending')
-        self.close()
-
+    # Recebe mensagens do servidor após começar a enviar o arquivo. Engloba mensagens ACK e FIM.
     def receive_ack(self):
         global window_mutex
-        global timer
 
         while True:
             data = self.tcp_sock.recv(ACK_len)
             if not data:
                 break
+            # Caso receba FIM, termina a recepção de mensagens
             if parse_header(data) == (message_type.END, message_channel.CONTROL):
-                print('Received END from server. Shutting down connection')
+                print('Arquivo enviado com sucesso.')
                 break
             elif parse_header(data) != (message_type.ACK, message_channel.CONTROL):
-                print('Error: got message of type different than ACK or END.')
+                print('ERRO: Recebeu mensagem de outro tipo que não ACK ou FIM.')
+            # Recebeu ACK do servidor
             else:
                 ack = int.from_bytes(data[HEADER_len:], byteorder='big')
+                # Atualiza o último pacote confirmado
                 if ack > self.last_acked:
                     self.last_acked = ack
-                print('Received ACK ' + str(ack) + ', last ACKed: ' + str(self.last_acked))
+                # Atualiza o próximo pacote a enviar
                 if ack >= self.next_packet_to_send:
                     window_mutex.acquire()
                     self.next_packet_to_send = ack
-                    print('Next to send: ' + str(self.next_packet_to_send))
-                    timer.stop()
                     window_mutex.release()
-        print('Received all packets.')      
-
-    def close(self):
-        self.tcp_sock.close()
-        os._exit(1)
 
 if __name__ == "__main__":
     if(len(sys.argv)) != 4:
@@ -135,3 +128,4 @@ if __name__ == "__main__":
         client.init_conn()
         client.send_file_data()
         client.send_file()
+        client.tcp_sock.close()
