@@ -73,8 +73,6 @@ class Server:
             return
 
         next_packet_to_recv = 0
-        # Highest sequence number received + 1
-        highest_seq_recv = 1
         pkt_count = msg_count(file_size)
         stored_pkts = [-1 for i in range(msg_count(file_size))]
         print('Packets to receive: ' + str(len(stored_pkts)))
@@ -95,21 +93,19 @@ class Server:
                     next_packet_to_recv += 1
                     while next_packet_to_recv < len(stored_pkts) and stored_pkts[next_packet_to_recv] != -1:
                         next_packet_to_recv += 1
+                    print('Next to receive: ' + str(next_packet_to_recv))
 
-                if seq_num >= highest_seq_recv:
-                    highest_seq_recv = seq_num + 1
-                    print('Highest seq recv: ' + str(highest_seq_recv))
-                    if highest_seq_recv >= pkt_count:
-                        print('Received all packets from file.')
-                        # Send final ACK
-                        c_sock.send(ack_msg(next_packet_to_recv))
-                        break
+                if next_packet_to_recv >= pkt_count:
+                    print('Received all packets from file.')
+                    c_sock.send(ack_msg(next_packet_to_recv))
+                    break
             
             # Transmit ACK
             print('Sending ACK ' + str(next_packet_to_recv))
             c_sock.send(ack_msg(next_packet_to_recv))
 
         # Writing on file
+        print(stored_pkts)
         file_data = b''
         for i in stored_pkts:
             file_data += i
