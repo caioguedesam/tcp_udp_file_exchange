@@ -20,110 +20,111 @@ class Server:
             c_sock, c_addr = self.tcp_sock.accept()
             threading.Thread(target = self.client_thread, args = (c_sock, c_addr)).start()
 
+    # Inicia conexão com um cliente. Engloba mensagens HELLO e CONNECTION.
     def init_conn(self, c_sock, c_addr):
-        # Receiving HELLO message from client
+        # Recebendo HELLO
         data = c_sock.recv(HELLO_len)
         if parse_header(data) != (message_type.HELLO, message_channel.CONTROL):
-            print('Error: didn\'t receive HELLO from client at ' + str(c_addr[0]) + ':' + str(c_addr[1]))
+            print('ERRO: Não recebeu mensagem do tipo HELLO do cliente ' + str(c_addr[0]) + ':' + str(c_addr[1]))
             return 0, 0
-        print('Received HELLO from client ' + str(c_addr[0]) + ':' + str(c_addr[1]))
 
-        # Creating new UDP socket for receiving client data
+        # Criando socket UDP para receber arquivo do cliente
         c_data_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         c_data_sock.bind((self.addr, 0))
 
-        # Confirming CONNECTION and sending appropriate port
+        # Mandando CONNECTION com porta alocada no socket UDP
         c_data_port = c_data_sock.getsockname()[1]
-        connection = connection_msg(c_data_port)
-        c_sock.send(connection)
-        print('Sent CONNECTION message to client ' + str(c_addr[0]) + ':' + str(c_addr[1]) + ', with UDP port: ' + str(c_data_port))
+        c_sock.send(connection_msg(c_data_port))
         return c_data_sock, c_data_port
 
+    # Recebe informação do arquivo que o cliente vai enviar. Engloba mensagens INFO e OK.
     def get_file_info(self, c_sock):
-        # Receiving INFO message from client with file information
+        # Recebendo mensagem INFO com nome e tamanho do arquivo
         data = c_sock.recv(INFO_len)
         if parse_header(data) != (message_type.INFO, message_channel.CONTROL):
-            print('Error: didn\'t receive INFO from client')
+            print('ERRO: Não recebeu mensagem do tipo INFO.')
             return 0, 0
-        
         file_info = data[HEADER_len:]
         file_name = file_info[:INFO_filename_len].decode(encoding="ascii").lstrip('\x00')
         file_size = int.from_bytes(file_info[INFO_filename_len:], byteorder='big')
-        print('Received INFO from client ' + repr(file_name) + ':' + str(file_size))
 
-        # Sending OK message to client
-        ok = ok_msg()
-        c_sock.send(ok)
-        print('Sent OK')
+        # Mandando OK
+        c_sock.send(ok_msg())
         return file_name, file_size
 
+    # Recebe o arquivo de um cliente e retorna uma lista com os dados de cada pacote. Engloba mensagens FILE e ACK.
+    def get_file(self, c_sock, c_data_sock, file_size):
+        next_packet_to_recv = 0
+        pkt_count = msg_count(file_size)
+        stored_pkts = [-1 for i in range(msg_count(file_size))]
 
+        while True:
+            data, addr = c_data_sock.recvfrom(FILE_max_len)
+            if parse_header(data) != (message_type.FILE, message_channel.DATA):
+                print('ERRO: Não recebeu mensagem do tipo FILE no canal UDP.')
+                continue
+
+            seq_num = int.from_bytes(data[HEADER_len:HEADER_len + FILE_seq_num_len], byteorder='big')
+            # Verificando se pacote recebido está na janela apropriada
+            if seq_num >= next_packet_to_recv and seq_num < next_packet_to_recv + WINDOW_SIZE:
+                pkt_data = data[HEADER_len + FILE_seq_num_len + FILE_payload_size_len:]
+                # Caso pacote recebido não tenha sido armazenado, armazena-o
+                if stored_pkts[seq_num] == -1:
+                    stored_pkts[seq_num] = pkt_data
+
+                # Atualizando o número do último pacote recebido em sequência.
+                if seq_num == next_packet_to_recv:
+                    next_packet_to_recv += 1
+                    while next_packet_to_recv < len(stored_pkts) and stored_pkts[next_packet_to_recv] != -1:
+                        next_packet_to_recv += 1
+
+                # Caso todos os pacotes sejam recebidos, manda o último ACK e para de receber.
+                if next_packet_to_recv >= pkt_count:
+                    c_sock.send(ack_msg(next_packet_to_recv))
+                    break
+            
+            # Mandando ACK do último pacote recebido em sequência (sempre manda o próximo a receber).
+            c_sock.send(ack_msg(next_packet_to_recv))
+        return stored_pkts
+
+    # Escreve uma lista de pacotes em um arquivo continuamente.
+    def write_file(self, file_name, packets):
+        file_data = b''
+        for i in packets:
+            file_data += i
+        if len(file_data) > 0:
+            f = open(os.path.join('output', file_name), 'wb')
+            f.write(file_data)
+            f.close()
+
+    # Termina a conexão com um dado cliente. Engloba mensagem FIM.
+    def end_connection(self, c_sock):
+        # Manda FIM para o cliente após receber o arquivo inteiro.
+        c_sock.send(end_msg())
+        data = c_sock.recv(HEADER_len)
+        if not data:
+            c_sock.close()
+
+    # Função executada para receber arquivos de cada cliente em paralelo.
     def client_thread(self, c_sock, c_addr):
         c_data_sock, c_data_port = self.init_conn(c_sock, c_addr)
-
         if (c_data_sock, c_data_port) == (0, 0):
-            print('ERROR: Closing socket') 
             c_sock.close()
             return
 
         file_name, file_size = self.get_file_info(c_sock)
         if (file_name, file_size) == (0, 0):
-            print('ERROR: Closing socket')
             c_sock.close()
             return
 
-        next_packet_to_recv = 0
-        pkt_count = msg_count(file_size)
-        stored_pkts = [-1 for i in range(msg_count(file_size))]
-        print('Packets to receive: ' + str(len(stored_pkts)))
-        while True:
-            data, addr = c_data_sock.recvfrom(FILE_max_len)
-            if parse_header(data) != (message_type.FILE, message_channel.DATA):
-                print('Error: received message on UDP that was not FILE message.')
-                continue
-            seq_num = int.from_bytes(data[HEADER_len:HEADER_len + FILE_seq_num_len], byteorder='big')
-            if seq_num >= next_packet_to_recv and seq_num < next_packet_to_recv + WINDOW_SIZE:
-                # Accept packet, within window
-                pkt_data = data[HEADER_len + FILE_seq_num_len + FILE_payload_size_len:]
-                if stored_pkts[seq_num] == -1:
-                    print('Storing packet ' + str(seq_num))
-                    stored_pkts[seq_num] = pkt_data
+        # Recebendo arquivo
+        pkts = self.get_file(c_sock, c_data_sock, file_size)
 
-                if seq_num == next_packet_to_recv:
-                    next_packet_to_recv += 1
-                    while next_packet_to_recv < len(stored_pkts) and stored_pkts[next_packet_to_recv] != -1:
-                        next_packet_to_recv += 1
-                    print('Next to receive: ' + str(next_packet_to_recv))
-
-                if next_packet_to_recv >= pkt_count:
-                    print('Received all packets from file.')
-                    c_sock.send(ack_msg(next_packet_to_recv))
-                    break
-            
-            # Transmit ACK
-            print('Sending ACK ' + str(next_packet_to_recv))
-            c_sock.send(ack_msg(next_packet_to_recv))
-
-        # Writing on file
-        print(stored_pkts)
-        file_data = b''
-        for i in stored_pkts:
-            file_data += i
-        if len(file_data) > 0:
-            print('Writing on new file...')
-            f = open(os.path.join('output', file_name), 'wb')
-            f.write(file_data)
-            f.close()
+        # Escrevendo no arquivo de saída
+        self.write_file(file_name, pkts)
         
-        # Sending END message
-        end = end_msg()
-        c_sock.send(end)
-        print('Sent END to client...')
-        close_conn = c_sock.recv(HEADER_len)
-        if not close_conn:
-            # Close client thread after finishing file transfer
-            print('Closing socket') 
-            c_sock.close()
+        # Terminando conexão com cliente
+        self.end_connection(c_sock)
 
 if __name__ == "__main__":
     try:

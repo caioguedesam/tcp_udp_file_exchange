@@ -1,7 +1,5 @@
 import socket, threading
-import sys, time
-from os.path import isfile
-from os import stat
+import sys, time, os
 from message_utils import *
 
 WINDOW_SIZE = 4
@@ -41,12 +39,12 @@ class Client:
 
     # Envia dados gerais do arquivo para o servidor. Engloba mensagens INFO e OK.
     def send_file_data(self):
-        if not isfile(self.file_name):
+        if not os.path.isfile(self.file_name):
             print('ERRO: Arquivo não encontrado na pasta atual.')
             return
         
         # Mandando mensagem INFO com nome e tamanho do arquivo
-        size = stat(self.file_name).st_size
+        size = os.stat(self.file_name).st_size
         self.file_pkt_count = msg_count(size)
         info = info_msg(self.file_name, size)
         self.tcp_sock.send(info)
@@ -120,12 +118,15 @@ class Client:
                     window_mutex.release()
 
 if __name__ == "__main__":
-    if(len(sys.argv)) != 4:
-        print('Usage: python3 cliente.py <server_ip> <server_port> <file_name>')
-        print('Example: python3 cliente.py 127.0.0.1 51511 file.txt')
-    else:
-        client = Client(sys.argv[1], int(sys.argv[2]), sys.argv[3])
-        client.init_conn()
-        client.send_file_data()
-        client.send_file()
-        client.tcp_sock.close()
+    try:
+        if(len(sys.argv)) != 4:
+            print('Usage: python3 cliente.py <server_ip> <server_port> <file_name>')
+            print('Example: python3 cliente.py 127.0.0.1 51511 file.txt')
+        else:
+            client = Client(sys.argv[1], int(sys.argv[2]), sys.argv[3])
+            client.init_conn()
+            client.send_file_data()
+            client.send_file()
+            client.tcp_sock.close()
+    except KeyboardInterrupt:
+        os._exit(1)

@@ -1,6 +1,6 @@
 from enum import Enum
 
-# Sizes of data elements from each message type, in bytes
+# Tamanho de cada elemento de mensagem, em bytes
 HEADER_len = 2
 CONN_port_len = 4
 INFO_filename_len = 15
@@ -10,7 +10,7 @@ FILE_payload_size_len = 2
 FILE_payload_max_len = 1000
 ACK_seq_num_len = FILE_seq_num_len
 
-# Sizes of each message type, in bytes
+# Tamanho de cada tipo de mensagem, em bytes
 HELLO_len, OK_len, END_len = HEADER_len, HEADER_len, HEADER_len
 CONN_len = HEADER_len + CONN_port_len
 INFO_len = HEADER_len + INFO_filename_len + INFO_file_len
@@ -38,38 +38,37 @@ def make_header(type, channel):
 def parse_header(msg):
     header = msg[:HEADER_len]
     header_values = list(header)
-    # Convert values from header into correct enum types
+    # Convertendo valores do cabeçalho para classificações correspondentes.
     header_type = message_type(header_values[0])
     header_channel = message_channel(header_values[1])
     return (header_type, header_channel)
 
-# Makes HELLO message from client
+# Gera mensagem HELLO
 def hello_msg():
     return make_header(message_type.HELLO, message_channel.CONTROL)
 
-# Makes CONNECTION message from server, with UDP port for client to send data to
+# Gera mensagem CONNECTION
 def connection_msg(udp_port):
     header = make_header(message_type.CONNECTION, message_channel.CONTROL)
     port = udp_port.to_bytes(CONN_port_len, byteorder='big')
-    msg = header + port
-    return msg
+    return header + port
 
-# Returns if a given file name is valid or not, when sending INFO message
+# Retorna se o nome de um arquivo é válido ou não, na mensagem INFO
 def valid_file_name(file_name):
     try:
-        # File name needs to be a valid ASCII string
+        # Nome precisa ser uma string ASCII válida
         file_name_ascii = file_name.encode(encoding="ascii")
 
-        # File name size needs to be 15 bytes at most
+        # Nome precisa ter no máximo 15 bytes
         if len(file_name.encode()) > INFO_filename_len:
             return False
         
-        # File name needs to have only one dot
+        # Nome precisa ter apenas um ponto
         dot_count = file_name.count('.')
         if dot_count != 1:
             return False
         
-        # File name needs to have at least 3 characters after dot
+        # Nome precisa ter pelo menos 3 caracteres na extensão
         file_name_split = file_name.split('.')
         if len(file_name_split[1]) < 3:
             return False
@@ -78,29 +77,27 @@ def valid_file_name(file_name):
     except UnicodeError:
         return False
 
-# Makes INFO message from client, with file name and size for uploading.
+# Gera mensagem INFO
 def info_msg(file_name, file_size):
     if(not valid_file_name(file_name)):
-        print('Nome não permitido')
+        print('Nome não permitido.')
         return ''
     header = make_header(message_type.INFO, message_channel.CONTROL)
-    # Name always with 15 bytes
     name = file_name.encode(encoding="ascii")
+    # Nome sempre com 15 bytes, com \x00 em bytes vazios na esquerda
     name = b'\x00' * (INFO_filename_len - len(name)) + name
     size = file_size.to_bytes(INFO_file_len, byteorder='big')
-    msg = header + name + size
-    return msg
+    return header + name + size
 
-# Makes OK message from server, after allocating structures to receive file w/ udp.
+# Faz mensagem OK
 def ok_msg():
     return make_header(message_type.OK, message_channel.CONTROL)
 
-# Makes END message from server, when server received all packets.
+# Faz mensagem FIM
 def end_msg():
     return make_header(message_type.END, message_channel.CONTROL)
 
-# Makes list of FILE messages, from file to upload to server. Each message contains a
-# sequence number to identify its order in the file, as well as message size and data.
+# Gera lista de mensagens FILE, cada uma com um pacote do arquivo a ser enviado.
 def file_msg(file_name, max_payload_size = FILE_payload_max_len):
     header = make_header(message_type.FILE, message_channel.DATA)
     f = open(file_name, 'rb')
@@ -116,16 +113,14 @@ def file_msg(file_name, max_payload_size = FILE_payload_max_len):
         payload_num += 1
     return msgs
 
-# Get number of separate messages based on a file size
+# Retorna número de pacotes/mensagens um arquivo precisará dado seu tamanho em bytes.
 def msg_count(file_size):
     count = file_size // FILE_payload_max_len
     if file_size % FILE_payload_max_len > 0:
         count += 1
     return count
 
-# Makes ACK message from server, confirming receiving FILE message with
-# specified sequence number.
+# Gera mensagem ACK
 def ack_msg(seq_num):
     header = make_header(message_type.ACK, message_channel.CONTROL)
-    msg = header + seq_num.to_bytes(ACK_seq_num_len, byteorder='big')
-    return msg
+    return header + seq_num.to_bytes(ACK_seq_num_len, byteorder='big')
