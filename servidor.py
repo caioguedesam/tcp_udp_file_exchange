@@ -2,22 +2,28 @@ import socket
 import threading
 import sys, os
 from message_utils import *
+from ip_parser import is_ipv4, is_ipv6
 
 WINDOW_SIZE = 4
 
 class Server:
-    def __init__(self, addr, port):
-        self.addr = addr
+    def __init__(self, addr4, addr6, port):
+        self.addr4 = addr4
+        self.addr6 = addr6
         self.port = port
 
-        self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.tcp_sock.bind((self.addr, self.port))
+        self.tcp_sock_4 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.tcp_sock_4.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.tcp_sock_4.bind((self.addr4, self.port))
+        self.tcp_sock_6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        self.tcp_sock_6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.tcp_sock_6.bind((self.addr6, self.port))
 
-    def listen(self):
-        self.tcp_sock.listen()
+    def listen(self, mode = 4):
+        sock = self.tcp_sock_4 if mode == 4 else self.tcp_sock_6
+        sock.listen()
         while True:
-            c_sock, c_addr = self.tcp_sock.accept()
+            c_sock, c_addr = sock.accept()
             threading.Thread(target = self.client_thread, args = (c_sock, c_addr)).start()
 
     # Inicia conexão com um cliente. Engloba mensagens HELLO e CONNECTION.
@@ -29,8 +35,12 @@ class Server:
             return 0, 0
 
         # Criando socket UDP para receber arquivo do cliente
-        c_data_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        c_data_sock.bind((self.addr, 0))
+        if is_ipv4(c_addr[0]):
+            c_data_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            c_data_sock.bind((self.addr4, 0))
+        elif is_ipv6(c_addr[0]):
+            c_data_sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            c_data_sock.bind((self.addr6, 0))
 
         # Mandando CONNECTION com porta alocada no socket UDP
         c_data_port = c_data_sock.getsockname()[1]
@@ -132,8 +142,16 @@ if __name__ == "__main__":
             print('Usage: python3 servidor.py <server_port>')
             print('Example: python3 servidor.py 51511')
         else:
-            ip = '127.0.0.1'
-            server = Server(ip, int(sys.argv[1]))
-            server.listen()
+            ipv4 = '127.0.0.1'
+            ipv6 = '::'
+            server = Server(ipv4, ipv6, int(sys.argv[1]))
+            # Ouve por clientes em socket ipv4 e ipv6
+            listen_ipv4 = threading.Thread(target=server.listen, args=(4,))
+            listen_ipv6 = threading.Thread(target=server.listen, args=(6,))
+            listen_ipv4.start()
+            listen_ipv6.start()
+            listen_ipv4.join()
+            listen_ipv6.join()
+            
     except KeyboardInterrupt:
         os._exit(1)

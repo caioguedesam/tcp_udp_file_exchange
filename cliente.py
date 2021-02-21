@@ -1,6 +1,7 @@
 import socket, threading
 import sys, time, os
 from message_utils import *
+from ip_parser import is_ipv4, is_ipv6
 
 WINDOW_SIZE = 4
 TIMEOUT_TIME = 5
@@ -14,8 +15,15 @@ class Client:
         self.s_port = s_port
         self.file_name = file_name
 
-        self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_sock.connect((s_addr, s_port))
+        if is_ipv4(self.s_addr):
+            self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.tcp_sock.connect((s_addr, s_port))
+        elif is_ipv6(self.s_addr):
+            self.tcp_sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+            self.tcp_sock.connect((s_addr, s_port))
+        else:
+            print('ERRO: Endereço de cliente inválido. Insira endereço IPv4 ou IPv6.')
+            os._exit(1)
 
         self.next_packet_to_send = 0
         self.last_acked = 0
@@ -34,7 +42,10 @@ class Client:
 
         # Alocando socket UDP para enviar arquivo
         port = data[HEADER_len:]
-        self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        if is_ipv4(self.s_addr):
+            self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        elif is_ipv6(self.s_addr):
+            self.udp_sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
         self.udp_port = int.from_bytes(port, byteorder='big')
 
     # Envia dados gerais do arquivo para o servidor. Engloba mensagens INFO e OK.
@@ -120,7 +131,7 @@ class Client:
 if __name__ == "__main__":
     try:
         if(len(sys.argv)) != 4:
-            print('Usage: python3 cliente.py <server_ip> <server_port> <file_name>')
+            print('Usage: python3 cliente.py <server_ipv4|server_ipv6> <server_port> <file_name>')
             print('Example: python3 cliente.py 127.0.0.1 51511 file.txt')
         else:
             client = Client(sys.argv[1], int(sys.argv[2]), sys.argv[3])
